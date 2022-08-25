@@ -1,0 +1,74 @@
+# HashData and Greenplum health check config
+
+report_format: html
+
+report_path: /home/gpadmin
+
+db_version_check: 
+  enabled: true   
+      
+seg_config_check:
+  enabled: true  
+
+os_version_check:
+  enabled: true  
+
+cpu_cores_check:
+  enabled: true  
+
+memory_size_check:
+  enabled: true  
+
+diskspace_check:
+  enabled: true  
+
+host_load_check:
+  enabled: true  
+
+segments_status_check:
+  enabled: true  
+
+standby_status_check:
+  enabled: true  
+
+guc_check:
+  enabled: true  
+
+res_queue_check:
+  enabled: true  
+
+db_size_check:
+  enabled: true  
+
+schema_size_check:
+  enabled: true  
+
+table_size_check:
+  enabled: true  
+
+data_skew_check:
+  enabled: true  
+
+table_bloat_check:
+  enabled: true  
+
+db_age_check:
+  enabled: true  
+
+table_age_check:
+  enabled: true  
+
+temp_schema_check:
+  enabled: true  
+
+pg_activity_check:
+  enabled: true  
+
+pg_locks_check:
+  enabled: true  
+
+stale_stats_check:
+  enabled: true  
+  
+master_log_check:
+  enabled: true  
