@@ -659,7 +659,7 @@ def table_size_check(db_list,rpt_format):
 def data_skew_check(db_list,rpt_format):
     check_item = 'Tables Data Skew'
     check_result = 'OK'
-    check_result_detail = 'See below details for tables > 20%% data skew.'
+    check_result_detail = 'See below details for tables > 20% data skew.'
     for db in db_list:
         dbconn = pgdb.connect(database=db, host='localhost:5432', user='gpadmin')
         create_function_output = execSQL(dbconn,create_data_skew_fn_sql)
