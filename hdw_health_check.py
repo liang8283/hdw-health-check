@@ -94,6 +94,23 @@ and relation in (select relation from pg_locks where granted = 'f')
 order by gp_segment_id
 '''
 get_bloat_sql = 'select * from gp_toolkit.gp_bloat_diag where bdirelpages/bdiexppages >=5 order by bdirelpages/bdiexppages desc limit 20'
+get_ao_bloat_sql = '''
+select * from (
+SELECT 
+c.oid, 
+n.nspname AS schema_name, 
+c.relname AS table_name, 
+c.reltuples::bigint AS num_rows, 
+(SELECT max(percent_hidden) FROM gp_toolkit.__gp_aovisimap_compaction_info(c.oid)) as percent_hidden, 
+(SELECT sum(total_tupcount) FROM gp_toolkit.__gp_aovisimap_compaction_info(c.oid)) as total_tupcount, 
+(SELECT sum(hidden_tupcount) FROM gp_toolkit.__gp_aovisimap_compaction_info(c.oid))  as hidden_tupcount 
+FROM pg_appendonly a 
+JOIN pg_class c ON c.oid=a.relid 
+JOIN pg_namespace n ON c.relnamespace=n.oid 
+WHERE relstorage in ('c', 'a')  
+) as ao_bloat
+where percent_hidden > 20
+'''
 get_diskspace_sql = '''
 SELECT distinct dfhostname, dfdevice, (dfspace/1024/1024)::decimal(18,2) as "space_avail_gb" FROM gp_toolkit.gp_disk_free order by dfhostname
 '''
@@ -763,12 +780,39 @@ def pg_locks_check(dbconn, pg_version, rpt_format):
     return (check_item, check_result, pg_locks_check_output)
 
 def table_bloat_check(db_list, rpt_format):
-    check_item = 'Significant Bloat Tables'
+    check_item = 'Significant Bloat Heap Tables'
     check_result = 'OK'
     check_result_detail = ''
     for db in db_list:
         dbconn = pgdb.connect(database=db, host='localhost:5432', user='gpadmin')
         cursor = execSQL(dbconn, get_bloat_sql)
+        bloat_result = cursor.fetchall()
+        column_names_list = [row[0] for row in cursor.description]
+        bloat_table = PrettyTable(column_names_list)
+        if cursor.rowcount > 0:
+            check_result = 'NOT OK'
+            for row in bloat_result:
+                bloat_table.add_row(row)
+        if rpt_format == 'text': 
+            check_result_detail += '\nDatabase: ' + db + '\n' + bloat_table.get_string() + '\n'
+        if rpt_format == 'html':
+            check_result_detail += '<div style="clear:both"><br><b><li>Database: ' + db + '</li></b><div style="clear:both">\n' + bloat_table.get_html_string(attributes={
+            'width': '60%',
+            'align': 'left',
+            'BORDERCOLOR': '#330000',
+            'border': 2,
+        }) + '\n<br>'
+        dbconn.close()
+    bloat_table_check_output = check_items_output(check_item, check_result, check_result_detail, rpt_format)
+    return (check_item, check_result, bloat_table_check_output)
+
+def ao_bloat_check(db_list, rpt_format):
+    check_item = 'Significant Bloat AO Tables'
+    check_result = 'OK'
+    check_result_detail = ''
+    for db in db_list:
+        dbconn = pgdb.connect(database=db, host='localhost:5432', user='gpadmin')
+        cursor = execSQL(dbconn, get_ao_bloat_sql)
         bloat_result = cursor.fetchall()
         column_names_list = [row[0] for row in cursor.description]
         bloat_table = PrettyTable(column_names_list)
@@ -977,9 +1021,12 @@ def hdw_health_check(configs):
     if configs['table_size_check']['enabled']:
         table_size_check_output = table_size_check(db_list,rpt_format)
         report_output_list.append(table_size_check_output)
-    if configs['table_bloat_check']['enabled']:
-        table_bloat_check_output = table_bloat_check(db_list,rpt_format)
-        report_output_list.append(table_bloat_check_output)
+    if configs['heap_table_bloat_check']['enabled']:
+        heap_table_bloat_check_output = table_bloat_check(db_list,rpt_format)
+        report_output_list.append(heap_table_bloat_check_output)
+    if configs['ao_table_bloat_check']['enabled']:
+        ao_table_bloat_check_output = ao_bloat_check(db_list, rpt_format)
+        report_output_list.append(ao_table_bloat_check_output)
     if configs['data_skew_check']['enabled']:
         data_skew_check_output = data_skew_check(db_list,rpt_format)
         report_output_list.append(data_skew_check_output)

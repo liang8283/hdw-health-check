@@ -66,7 +66,8 @@ python ./hdw_health_check.py -f config.yml
 |schema_size_check|Get all schemas size in each database|
 |table_size_check|Get top 10 size tables in each database. **Note**: It could take some time to perform this check if the database is large.|
 |data_skew_check| Check table data skew by comparing the files size on OS across each segment. If the gap between max size and min size segment > 20% for any table, the check result will be `NOT OK` with table details.|
-| table_bloat_check| Get the table list with (actual pages/expected page > 5).|
+|heap_table_bloat_check| Get the table list with (actual pages/expected page > 5).|
+|ao_table_bloat_check| Get the AO/AOCS table list with (total_tupcount/hidden_tupcount > 5).|
 |db_age_check| Check db age for each database across all segments. The result will be `NOT OK` if the age reaches the warn limit `2^31-1 - xid_stop_limit`.|
 |table_age_check| Get top 3 age tables from each segment and show `NOT OK` if the table age reaches the warn limit `2^31-1 - xid_stop_limit`.|
 |temp_schema_check| Check master and all segments for any temp schemas existing.|

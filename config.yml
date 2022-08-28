@@ -1,6 +1,6 @@
 # HashData and Greenplum health check config
 
-report_format: html
+report_format: text
 
 report_path: /home/gpadmin
 
@@ -49,8 +49,11 @@ table_size_check:
 data_skew_check:
   enabled: true  
 
-table_bloat_check:
+heap_table_bloat_check:
   enabled: true  
+
+ao_table_bloat_check:
+  enabled: true
 
 db_age_check:
   enabled: true  
