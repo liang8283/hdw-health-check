@@ -49,29 +49,29 @@ python ./hdw_health_check.py -f config.yml
 
 ## Supported Check Items
 
-| Check Item  | Description | 
-|:------------|:------------|
-|db_version_check| Check database version |
-|seg_config_check| Get `gp_segment_configuration`|
-|os_version_check| Check OS version for each host in cluster|
-|cpu_cores_check| Check CPU cores for each host in cluster|
-|memory_size_check| Check RAM size for each host in cluster|
-|diskspace_check| Check free diskspace for database data directory|
-|host_load_check| Get `uptime` output for each host|
-|segments_status_check|Check if there is any segments down|
-|standby_status_check|Check if the standby master is sync or not|
-|guc_check|Get current important GUCs setting|
-|res_queue_check|Get resource queue setting. If no resource queue other than `pg_default` exists, check result shows `NOT OK`.|
-|db_size_check|Get db size for all databases in cluster|
-|schema_size_check|Get all schemas size in each database|
-|table_size_check|Get top 10 size tables in each database. **Note**: It could take some time to perform this check if the database is large.|
-|data_skew_check| Check table data skew by comparing the files size on OS across each segment. If the gap between max size and min size segment > 20% for any table, the check result will be `NOT OK` with table details.|
-|heap_table_bloat_check| Get the table list with (actual pages/expected page > 5).|
-|ao_table_bloat_check| Get the AO/AOCS table list with (total_tupcount/hidden_tupcount > 5).|
-|db_age_check| Check db age for each database across all segments. The result will be `NOT OK` if the age reaches the warn limit `2^31-1 - xid_stop_limit`.|
-|table_age_check| Get top 3 age tables from each segment and show `NOT OK` if the table age reaches the warn limit `2^31-1 - xid_stop_limit`.|
-|temp_schema_check| Check master and all segments for any temp schemas existing.|
-|pg_activity_check|Check current running queries in database. The check result will be `NOT OK` if any query runs > 1hr.|
-|pg_locks_check| Check if there is any session holding the lock > 10mins.|
-|stale_stats_check|Get a list of tables which have not been analyzed for > 7 days in each database.|
-|master_log_check|Get the latest 100 PANIC or FATAL errors from pg_log|
+| Check Item  | Supported Version | Description | 
+|:------------|:------------|:------------|
+|db_version_check|hdw2,hdw3,GP5,GP6|Check database version |
+|seg_config_check|hdw2,hdw3,GP5,GP6| Get `gp_segment_configuration`|
+|os_version_check|hdw2,hdw3,GP5,GP6|Check OS version for each host in cluster|
+|cpu_cores_check|hdw2,hdw3,GP5,GP6| Check CPU cores for each host in cluster|
+|memory_size_check|hdw2,hdw3,GP5,GP6| Check RAM size for each host in cluster|
+|diskspace_check|hdw2,hdw3,GP5,GP6| Check free diskspace for database data directory|
+|host_load_check|hdw2,hdw3,GP5,GP6| Get `uptime` output for each host|
+|segments_status_check|hdw2,GP5,GP6|Check if there is any segments down. |
+|standby_status_check|hdw2,GP5,GP6|Check if the standby master is sync or not. |
+|guc_check|hdw2,hdw3,GP5,GP6|Get current important GUCs setting|
+|res_queue_check|hdw2,hdw3,GP5,GP6|Get resource queue setting. If no resource queue other than `pg_default` exists, check result shows `NOT OK`.|
+|db_size_check|hdw2,hdw3,GP5,GP6|Get db size for all databases in cluster|
+|schema_size_check|hdw2,hdw3,GP5,GP6|Get all schemas size in each database|
+|table_size_check|hdw2,hdw3,GP5,GP6|Get top 10 size tables in each database. **Note**: It could take some time to perform this check if the database is large.|
+|data_skew_check| hdw2,hdw3,GP5,GP6|- For GP/HashData 2x, check table data skew by comparing the files size on OS across each segment. If the table size > 1GB and gap between max size and min size segment > 20%, the check result will be `NOT OK`. - For HashData 3x, check the coefficients for AO tables with rowcounts > 100,000.|
+|heap_table_bloat_check| hdw2,GP5,GP6|Get the table list with (actual pages/expected page > 5).|
+|ao_table_bloat_check|  hdw2,hdw3,GP5,GP6|Get the AO/AOCS table list with (total_tupcount/hidden_tupcount > 5).|
+|db_age_check| hdw2,GP5,GP6|Check db age for each database across all segments. The result will be `NOT OK` if the age reaches the warn limit `2^31-1 - xid_stop_limit`.|
+|table_age_check| hdw2,GP5,GP6|Get top 3 age tables from each segment and show `NOT OK` if the table age reaches the warn limit `2^31-1 - xid_stop_limit`.|
+|temp_schema_check| hdw2,hdw3,GP5,GP6|Check master and all segments for any temp schemas existing.|
+|pg_activity_check|hdw2,hdw3,GP5,GP6|Check current running queries in database. The check result will be `NOT OK` if any query runs > 1hr.|
+|pg_locks_check| hdw2,hdw3,GP5,GP6|Check if there is any session holding the lock > 10mins.|
+|stale_stats_check|hdw2,hdw3,GP5,GP6|Get a list of tables which have not been analyzed for > 7 days in each database.|
+|master_log_check|hdw2,hdw3,GP5,GP6|Get the latest 100 PANIC or FATAL errors from pg_log|
