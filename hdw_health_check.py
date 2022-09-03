@@ -24,7 +24,9 @@ get_segment_config_sql = 'select dbid,content,role,preferred_role,mode,status,po
 get_hosts_sql = 'select distinct(hostname) as hostname from gp_segment_configuration order by hostname'
 get_guc_sql = '''
 select name as name, setting as setting from pg_settings where name in (
-'log_statement'
+'optimizer'
+,'optimizer_analyze_root_partition'
+,'log_statement'
 ,'checkpoint_segments'
 ,'gp_fts_probe_timeout'
 ,'gp_fts_probe_interval'
@@ -39,6 +41,7 @@ select name as name, setting as setting from pg_settings where name in (
 ,'gp_filerep_tcp_keepalives_count'
 ,'gp_filerep_tcp_keepalives_interval'
 ,'gp_vmem_protect_limit'
+,'statement_mem'
 ,'max_statement_mem'
 ,'gp_external_enable_exec'
 ,'statement_timeout'
@@ -107,7 +110,8 @@ c.reltuples::bigint AS num_rows,
 FROM pg_appendonly a 
 JOIN pg_class c ON c.oid=a.relid 
 JOIN pg_namespace n ON c.relnamespace=n.oid 
-WHERE relstorage in ('c', 'a')  
+WHERE relstorage in ('c', 'a')
+and c.reltuples > 100000
 ) as ao_bloat
 where percent_hidden > 20
 '''
@@ -253,12 +257,12 @@ WITH cluster AS (
 	SELECT gp_segment_id, datname, age(datfrozenxid) age FROM gp_dist_random('pg_database')
 )
 SELECT  gp_segment_id, datname, age,
-        CASE
-                WHEN age < (2^31-1 - current_setting('xid_stop_limit')::int - current_setting('xid_warn_limit')::int) THEN 'BELOW WARN LIMIT'
-                WHEN  ((2^31-1 - current_setting('xid_stop_limit')::int - current_setting('xid_warn_limit')::int) < age) AND (age <  (2^31-1 - current_setting('xid_stop_limit')::int)) THEN 'OVER WARN LIMIT and UNDER STOP LIMIT'
-                WHEN age > (2^31-1 - current_setting('xid_stop_limit')::int ) THEN 'OVER STOP LIMIT'
-                WHEN age < 0 THEN 'OVER WRAPAROUND'
-        END
+    CASE
+            WHEN age < (2^31-1 - current_setting('xid_stop_limit')::int - current_setting('xid_warn_limit')::int) THEN 'BELOW WARN LIMIT'
+            WHEN  ((2^31-1 - current_setting('xid_stop_limit')::int - current_setting('xid_warn_limit')::int) < age) AND (age <  (2^31-1 - current_setting('xid_stop_limit')::int)) THEN 'OVER WARN LIMIT and UNDER STOP LIMIT'
+            WHEN age > (2^31-1 - current_setting('xid_stop_limit')::int ) THEN 'OVER STOP LIMIT'
+            WHEN age < 0 THEN 'OVER WRAPAROUND'
+    END
 FROM cluster
 ORDER BY datname, gp_segment_id
 '''
@@ -286,18 +290,61 @@ select nspname from pg_namespace where nspname like 'pg_temp%' except select 'pg
 union
 select nspname from gp_dist_random('pg_namespace') where nspname like 'pg_temp%' except select 'pg_temp_' || sess_id::varchar from pg_stat_activity
 '''
-get_stale_stats_sql = '''select schemaname,relname,last_vacuum,last_analyze,last_autoanalyze
-from pg_stat_all_tables
-where schemaname not in ('pg_toast','pg_catalog','information_schema','gp_toolkit')
-and schemaname !~ '^pg_toast'
-and relname not like '%prt%'
+get_stale_stats_sql = '''
+select a.schemaname,a.relname,last_vacuum,last_analyze,last_autoanalyze
+from pg_stat_all_tables a join pg_class b
+on a.relid = b.oid
+where a.schemaname not in ('pg_toast','pg_catalog','information_schema','gp_toolkit')
+and a.schemaname !~ '^pg_toast'
+and a.relname not like '%prt%'
+and b.reltuples > 10000
 and COALESCE(last_vacuum,'2022-01-01',last_vacuum) < now() - interval '7 day' 
 and COALESCE(last_analyze,'2022-01-01',last_analyze) < now() - interval '7 day'
 and COALESCE(last_autoanalyze,'2022-01-01',last_analyze) < now() - interval '7 day'
-order by schemaname, relname
-limit 100
+order by a.schemaname, a.relname
 '''
-
+create_sp_gp_skew_sql = '''
+set SEARCH_PATH='gp_toolkit';
+CREATE OR REPLACE FUNCTION gp_toolkit.sp_gp_skew_coefficients(schemanm varchar(200), tablename varchar(300)) RETURNS SETOF gp_skew_analysis_t
+ 	AS $$
+DECLARE
+ 	skcoid oid;
+ 	skcrec record;
+BEGIN
+ 	SELECT autoid INTO skcoid 
+ 	FROM
+		gp_toolkit.__gp_user_data_tables_readable 
+ 	WHERE autrelstorage not in ('x','v') 
+	AND autnspname = schemanm 
+	AND autrelname = tablename;
+ 	
+ 	SELECT * INTO skcrec
+ 	FROM
+ 		gp_toolkit.gp_skew_coefficient(skcoid); 
+ 	RETURN next skcrec;
+END
+ 	$$
+LANGUAGE plpgsql;
+    '''
+get_ao_table_list_sql = '''
+select n.nspname, c.relname
+from pg_namespace n join pg_class c
+on n.oid = c.relnamespace
+where n.nspname not in ('information_schema','pg_catalog','gp_toolkit','pg_toast','pg_aoseg') 
+and relstorage in ('a','c')
+and c.reltuples > 100000
+'''
+get_ao_data_skew_sql = '''
+select 
+skew.skewoid AS skcoid, 
+pgn.nspname AS skcnamespace, 
+pgc.relname AS skcrelname, 
+skew.skewval AS skccoeff 
+from 
+	gp_toolkit.sp_gp_skew_coefficients(%s,%s) skew(skewoid, skewval) 
+JOIN pg_class pgc ON skew.skewoid = pgc.oid 
+JOIN pg_namespace pgn ON pgc.relnamespace = pgn.oid
+'''
 ################## Common functions ################## 
 def execSQL(conn,sql,params=''):
     cursor=conn.cursor()
@@ -315,12 +362,16 @@ def get_db_list(dbconn):
     return [row[0] for row in db_names_list]
 
 def get_pg_version(dbconn):
+    pg_kernal = ''
     cursor = execSQL(dbconn, 'select version()')
     pg_version = cursor.fetchone()
-    if 'PostgreSQL 9' in pg_version[0]:
-        pg_kernal = 9
-    elif 'PostgreSQL 8' in pg_version[0]:
-        pg_kernal = 8
+    if 'HashData Warehouse 3' in pg_version[0]:
+        pg_kernal = 'hdw3'
+    else:
+        if 'PostgreSQL 9' in pg_version[0]:
+            pg_kernal = 'pg9'
+        elif 'PostgreSQL 8' in pg_version[0]:
+            pg_kernal = 'pg8'
     return pg_kernal
 
 def _execute_shell_command(bash_command):
@@ -554,9 +605,9 @@ def standby_check(dbconn, pg_version, rpt_format):
     check_item = 'Standby Master'
     check_result = 'OK'
     check_result_detail = ''
-    if pg_version == 9:
+    if pg_version == 'pg9':
         cursor = execSQL(dbconn, check_standby_sql_pg9)
-    if pg_version == 8:
+    if pg_version == 'pg8':
         cursor = execSQL(dbconn, check_standby_sql_pg8)
     standby_output = cursor.fetchone()
     column_names_list = [row[0] for row in cursor.description]
@@ -673,31 +724,52 @@ def table_size_check(db_list,rpt_format):
     table_size_output = check_items_output(check_item, check_result, check_result_detail, rpt_format)
     return (check_item, check_result, table_size_output)
 
-def data_skew_check(db_list,rpt_format):
+def data_skew_check(db_list,pg_version,rpt_format):
     check_item = 'Tables Data Skew'
     check_result = 'OK'
-    check_result_detail = 'See below details for tables > 20% data skew.'
-    for db in db_list:
-        dbconn = pgdb.connect(database=db, host='localhost:5432', user='gpadmin')
-        create_function_output = execSQL(dbconn,create_data_skew_fn_sql)
-        cursor = execSQL(dbconn,get_data_skew_sql)
-        get_data_skew_result = cursor.fetchall()
-        column_names_list = [row[0] for row in cursor.description]
-        check_result_table = PrettyTable(column_names_list)
-        if cursor.rowcount >= 1:
-            check_result = 'NOT OK'
-            for row in get_data_skew_result:
-                check_result_table.add_row(row)
-        if rpt_format == 'text': 
-            check_result_detail += '\nDatabase: ' + db + '\n' + check_result_table.get_string() + '\n'
-        if rpt_format == 'html':
-            check_result_detail += '<div style="clear:both"><br><b><li>Database: ' + db + '</li></b><div style="clear:both">\n' + check_result_table.get_html_string(attributes={
-            'width': '60%',
-            'align': 'left',
-            'BORDERCOLOR': '#330000',
-            'border': 2,
-        }) + '\n<br>'
-        dbconn.close()
+    if pg_version != 'hdw3': 
+        check_result_detail = 'See below details for tables > 20% data skew.\n'
+        for db in db_list:
+            dbconn = pgdb.connect(database=db, host='localhost:5432', user='gpadmin')
+            create_function_output = execSQL(dbconn,create_data_skew_fn_sql)
+            cursor = execSQL(dbconn,get_data_skew_sql)
+            get_data_skew_result = cursor.fetchall()
+            column_names_list = [row[0] for row in cursor.description]
+            check_result_table = PrettyTable(column_names_list)
+            if cursor.rowcount >= 1:
+                check_result = 'NOT OK'
+                for row in get_data_skew_result:
+                    check_result_table.add_row(row)
+            dbconn.close()  
+    if pg_version == 'hdw3':
+        check_result_detail = 'See below details for tables with greatest data skew.\n\n'
+        for db in db_list:
+            dbconn = pgdb.connect(database=db, host='localhost:5432', user='gpadmin')
+            execSQL(dbconn,create_sp_gp_skew_sql)
+            cursor = execSQL(dbconn,get_ao_table_list_sql)
+            table_list = cursor.fetchall()
+            check_result_table = PrettyTable(['oid','schema','table','skccoeff'])
+            for table in table_list:
+                schema_name = table[0]
+                table_name = table[1]
+                cursor = execSQL(dbconn, get_ao_data_skew_sql, (schema_name,table_name,))
+                skew_result = cursor.fetchone()
+                skccoeff = skew_result[-1]
+                if skccoeff > 15:
+                    check_result = 'NOT OK.'
+                    check_result_table.add_row(skew_result)
+            check_result_table.sortby = "skccoeff"
+            check_result_table.reversesort = True
+            dbconn.close()  
+    if rpt_format == 'text': 
+        check_result_detail += '\nDatabase: ' + db + '\n' + check_result_table.get_string() + '\n'
+    if rpt_format == 'html':
+        check_result_detail += '<div style="clear:both"><br><b><li>Database: ' + db + '</li></b><div style="clear:both">\n' + check_result_table.get_html_string(attributes={
+        'width': '60%',
+        'align': 'left',
+        'BORDERCOLOR': '#330000',
+        'border': 2,
+    }) + '\n<br>'   
     data_skew_output = check_items_output(check_item, check_result, check_result_detail, rpt_format)
     return (check_item, check_result, data_skew_output)
 
@@ -729,9 +801,9 @@ def pg_activity_check(dbconn, pg_version, rpt_format):
     check_item = 'Current Long Running(> 1hr) Queries'
     check_result = 'OK'
     check_result_detail = ''
-    if pg_version == 9:
+    if pg_version == 'pg9' or pg_version == 'hdw3':
         cursor = execSQL(dbconn, get_pg_activity_sql_pg9)
-    if pg_version == 8:
+    if pg_version == 'pg8':
         cursor = execSQL(dbconn, get_pg_activity_sql_pg8)
     pg_activity_result = cursor.fetchall()
     column_names_list = [row[0] for row in cursor.description]
@@ -756,9 +828,9 @@ def pg_locks_check(dbconn, pg_version, rpt_format):
     check_item = 'Current Database Locks'
     check_result = 'OK'
     check_result_detail = ''
-    if pg_version == 9:
+    if pg_version == 'pg9' or pg_version == 'hdw3':
         cursor = execSQL(dbconn, get_pg_locks_sql_pg9)
-    if pg_version == 8:
+    if pg_version == 'pg8':
         cursor = execSQL(dbconn, get_pg_locks_sql_pg8)
     pg_locks_result = cursor.fetchall()
     column_names_list = [row[0] for row in cursor.description]
@@ -994,10 +1066,10 @@ def hdw_health_check(configs):
     if configs['host_load_check']['enabled']:
         host_load_check_output = host_load_check(hosts_list,rpt_format)
         report_output_list.append(host_load_check_output)
-    if configs['segments_status_check']['enabled']:
+    if configs['segments_status_check']['enabled'] and pg_version != 'hdw3':
         segments_check_output = segments_check(rpt_format)
         report_output_list.append(segments_check_output)
-    if configs['standby_status_check']['enabled']:
+    if configs['standby_status_check']['enabled'] and pg_version != 'hdw3':
         standby_check_output = standby_check(dbconn, pg_version,rpt_format)
         report_output_list.append(standby_check_output)
     if configs['guc_check']['enabled']:
@@ -1021,22 +1093,22 @@ def hdw_health_check(configs):
     if configs['table_size_check']['enabled']:
         table_size_check_output = table_size_check(db_list,rpt_format)
         report_output_list.append(table_size_check_output)
-    if configs['heap_table_bloat_check']['enabled']:
+    if configs['heap_table_bloat_check']['enabled'] and pg_version != 'hdw3':
         heap_table_bloat_check_output = table_bloat_check(db_list,rpt_format)
         report_output_list.append(heap_table_bloat_check_output)
     if configs['ao_table_bloat_check']['enabled']:
         ao_table_bloat_check_output = ao_bloat_check(db_list, rpt_format)
         report_output_list.append(ao_table_bloat_check_output)
     if configs['data_skew_check']['enabled']:
-        data_skew_check_output = data_skew_check(db_list,rpt_format)
+        data_skew_check_output = data_skew_check(db_list,pg_version,rpt_format)
         report_output_list.append(data_skew_check_output)
     if configs['stale_stats_check']['enabled']:
         stale_stats_check_output = stale_stats_check(db_list,rpt_format)
         report_output_list.append(stale_stats_check_output)
-    if configs['db_age_check']['enabled']:
+    if configs['db_age_check']['enabled'] and pg_version != 'hdw3':
         db_age_check_output = db_age_check(dbconn,rpt_format)
         report_output_list.append(db_age_check_output)
-    if configs['table_age_check']['enabled']:
+    if configs['table_age_check']['enabled'] and pg_version != 'hdw3':
         table_age_check_output = table_age_check(db_list,rpt_format)
         report_output_list.append(table_age_check_output)
     if configs['temp_schema_check']['enabled']:
