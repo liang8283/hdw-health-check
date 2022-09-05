@@ -1,11 +1,11 @@
 # hdw-health-check
 
-This tool can be used for health check on HashData 2x and Greenplum 5x/6x databases.
+This tool can be used for health check on HashData 2x/3x and Greenplum 5x/6x databases.
 
 ## Setup
 
 ### Prerequisites
-1. A running HashData 2x or Greenplum 5x/6x database with `gpadmin` access.
+1. A running HashData 2x/3x or Greenplum 5x/6x database with `gpadmin` access.
 2. `root` access or an OS user with `pip` permission on `master` node.
 3. Passwordless `ssh` between master node and segment nodes for `gpadmin` user.
 
