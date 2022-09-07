@@ -67,12 +67,12 @@ get_master_log_sql = '''select logtime,loguser,logdatabase,logpid,loghost,logses
     order by logtime desc limit 100
     '''
 get_pg_activity_sql_pg9 = '''
-select datname,pid,sess_id,usename,application_name,client_addr,client_hostname,backend_start,xact_start,query_start,date_part('second', now()-query_start) as duration_sec,waiting,state,query,waiting_reason,rsgname,rsgqueueduration 
+select datname,pid,sess_id,usename,application_name,client_addr,client_hostname,backend_start,xact_start,query_start,extract(epoch FROM (now() - query_start)) as duration_sec,waiting,state,query,waiting_reason,rsgname,rsgqueueduration 
 from pg_stat_activity
 where date_part('second', now()-query_start) > 3600
 '''
 get_pg_activity_sql_pg8 = '''
-select datname,procpid,sess_id,usename,application_name,client_addr,backend_start,xact_start,query_start,date_part('second', now()-query_start) as duration_sec,waiting,current_query,waiting_reason,rsgname,rsgqueueduration 
+select datname,procpid,sess_id,usename,application_name,client_addr,backend_start,xact_start,query_start,extract(epoch FROM (now() - query_start)) as duration_sec,waiting,current_query,waiting_reason,rsgname,rsgqueueduration 
 from pg_stat_activity
 where date_part('second', now()-query_start) > 3600
 '''
